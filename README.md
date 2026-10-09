@@ -1,41 +1,81 @@
 # JellyVision for Roku
 
-JellyVision turns a Jellyfin library into deterministic, always-on television
-channels. It is based on the official Jellyfin Roku client, retaining its server
-setup, login, saved sessions, device profiles, direct-play/transcoding support,
-subtitles, and mature video player.
+JellyVision makes your Jellyfin collection feel like ordinary television. It
+creates channels for TV shows, movies, animation, anime, comedy, drama and more.
+Choose a channel and watch whatever is on, already playing from the correct
+point in the programme.
 
-## Current milestone
+Your videos stay on your own Jellyfin server. JellyVision simply organises and
+plays them in a familiar TV guide.
 
-- Existing Jellyfin server connection, password login, Quick Connect, and saved
-  sessions from the upstream Roku client.
-- A watch-first home screen: JellyVision first finds one random live-action comedy
-  series and starts a temporary Comedy Preview channel. The programme panel and
-  guide remain available while the complete scan continues in the background.
-- JellyVision reads every page of movies, episodes, and parent-series metadata,
-  then builds all 34 permanent channels. Large libraries take longer, but are no
-  longer cut off at an alphabetical item limit. Preview playback never relaxes
-  or changes the permanent channels' matching rules.
-- Random TV, Movie Night, and Random Anime are complete overview channels.
-  Outside those three intentional overviews, every movie or series is assigned
-  to at most one specialist in each relevant lane to prevent excessive
-  repetition. Anime has separate genre and era lanes, so one series may appear
-  in Random Anime, one genre channel, and one decade channel.
-- Live-action television, live-action films, non-anime animation, anime series,
-  and anime films use separate pools. JellyVision never fills an empty channel with
-  unrelated content.
-- Deterministic schedules anchored to a fixed UTC epoch and tune-in playback at
-  the exact elapsed offset of the programme currently on air.
-- Remote channel control from the guide, channel-up/down keys where available,
-  and best-effort numeric-key handling for remotes that expose number buttons to
-  SceneGraph applications.
-- `*` toggles between the JellyVision guide layout and full-screen video.
-- The in-player guide uses a two-hour timeline with 15-minute markers. Programme
-  cards are positioned and sized from their real scheduled start and end times.
-- Ghost Mode defaults to enabled for JellyVision playback. It suppresses Jellyfin
-  start, progress, and stop activity reports so channel surfing does not alter
-  Recently Played, resume positions, watched status, or Next Up. Ordinary
-  Jellyfin playback remains unchanged.
+> **Please note:** JellyVision is currently a test version and is not yet in the
+> Roku Streaming Store. For now, it must be added to a Roku manually.
+
+## How to add JellyVision to your Roku
+
+You need a Roku TV or Roku player, a computer or phone on the same Wi-Fi network,
+and access to your Jellyfin server. The steps below only need to be completed
+once.
+
+### 1. Download JellyVision
+
+1. Sign in to GitHub and open the [JellyVision builds](https://github.com/alanoctua/jellyvision/actions/workflows/test.yml) page.
+2. Open the newest build that has a green tick beside it.
+3. Scroll to **Artifacts** at the bottom of the page.
+4. Download the file whose name starts with **JellyVision-Roku-dev**.
+5. Keep the downloaded `.zip` file as it is. Do not unzip it.
+
+### 2. Allow test apps on your Roku
+
+1. With the Roku remote, press **Home** three times, **Up** twice, then
+   **Right, Left, Right, Left, Right**.
+2. The Developer Settings screen will appear. Write down the web address shown
+   on the screen. It will look similar to `http://192.168.1.20`.
+3. Choose **Enable installer and restart**.
+4. Read and accept Roku's agreement, then create a password. Remember this
+   password because you will need it in the next step.
+5. Let the Roku restart.
+
+### 3. Send JellyVision to the Roku
+
+1. On your computer or phone, open a web browser and enter the Roku web address
+   you wrote down.
+2. If asked to sign in, use `rokudev` as the username and the password you just
+   created.
+3. Select **Upload**, choose the JellyVision `.zip` file, then select **Install**.
+4. JellyVision should open on the TV when installation finishes. It will also
+   appear at the bottom of the Roku home screen.
+
+Roku only allows one manually added test app at a time. Adding another test app
+later will replace JellyVision. See [Roku's official instructions](https://developer.roku.com/dev/docs/developer-setup)
+if the installer screen does not appear.
+
+### 4. Connect Jellyfin
+
+1. Open JellyVision and enter your Jellyfin server address, including
+   `http://` or `https://`. For example: `http://192.168.1.10:8096`.
+2. Sign in with your Jellyfin username and password, or use Quick Connect.
+3. JellyVision will start a comedy preview when it can, then continue finding
+   and organising the rest of your library. You can see its progress at the
+   bottom of the screen.
+4. When the channel guide is ready, move up or down and press **OK** to choose a
+   channel. Press `*` to switch between the guide and full-screen video.
+
+## What JellyVision does today
+
+- Connects directly to your Jellyfin server and remembers your sign-in.
+- Starts playing a comedy preview while it prepares the full channel guide.
+- Searches your entire library, even when it contains thousands of items.
+- Creates 34 channels for different kinds of programmes and films.
+- Keeps regular TV, movies, animation, anime series and anime films separate.
+- Makes each channel show content that matches its name. An empty channel stays
+  empty instead of being filled with unrelated programmes.
+- Shows a two-hour TV guide with programme boxes that match their real start and
+  finish times.
+- Lets you change channels with the guide, channel buttons and supported number
+  buttons on the remote.
+- Includes Ghost Mode, which is on by default. It stops channel surfing from
+  filling Jellyfin's Recently Played and Next Up lists or changing watch progress.
 
 ## Architecture
 
