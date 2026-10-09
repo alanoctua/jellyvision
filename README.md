@@ -1,5 +1,10 @@
 # JellyVision for Roku
 
+> **AI project notice:** JellyVision is a vibe-coded project created with
+> ChatGPT. AI was used to help design and write the app, so the code may contain
+> mistakes or unexpected behaviour. Please treat it as early test software and
+> report any problems you find.
+
 JellyVision makes your Jellyfin collection feel like ordinary television. It
 creates channels for TV shows, movies, animation, anime, comedy, drama and more.
 Choose a channel and watch whatever is on, already playing from the correct
