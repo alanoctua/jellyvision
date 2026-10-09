@@ -17,6 +17,19 @@ point in the programme.
 Your videos stay on your own Jellyfin server. JellyVision simply organises and
 plays them in a familiar TV guide.
 
+## Screenshots
+
+### Completed channel guide
+
+![JellyVision showing 34 completed channels](screenshots/jellyvision-channel-guide.png)
+
+### Building channels while the comedy preview plays
+
+![JellyVision scanning a library and building channels](screenshots/jellyvision-channel-loading.jpg)
+
+> Roku's developer screenshot tool captures the app interface but not playing
+> video, so the video area is black in these images. Video appears there on the TV.
+
 > **Please note:** JellyVision is currently a test version and is not yet in the
 > Roku Streaming Store. For now, it must be added to a Roku manually.
 
