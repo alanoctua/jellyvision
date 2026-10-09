@@ -1,0 +1,34 @@
+import "pkg:/source/channels/ScheduleEngine.bs"
+import "pkg:/source/utils/misc.bs"
+
+' Adapts a generated channel to the official Jellyfin queue/player stack.
+sub TuneGeneratedChannel(channel as object)
+    if not isValid(channel) or not isValid(channel.items) or channel.items.Count() = 0
+        m.global.sceneManager.callFunc("userMessage", "Channel unavailable", "This channel has no playable Jellyfin items.")
+        return
+    end if
+
+    m.global.cableFinCurrentChannel = channel
+
+    nowSeconds = ChannelSchedule_NowSeconds()
+    schedule = ChannelSchedule_BuildWindow(channel.items, channel.seed, nowSeconds, 12, true)
+    if schedule.Count() = 0
+        m.global.sceneManager.callFunc("userMessage", "Channel unavailable", "A schedule could not be generated for this channel.")
+        return
+    end if
+
+    playQueue = []
+    for each programme in schedule
+        ' Copy the server response so playback-only fields never mutate the guide.
+        playItem = ParseJson(FormatJson(programme.item))
+        playItem.startingPoint = programme.offsetSeconds * 10000000&
+        playItem.pseudoLive = true
+        playItem.pseudoChannelId = channel.id
+        playItem.pseudoChannelName = channel.name
+        playItem.pseudoChannelNumber = channel.number
+        playQueue.Push(playItem)
+    end for
+
+    m.global.queueManager.callFunc("set", playQueue)
+    m.global.queueManager.callFunc("playQueue")
+end sub

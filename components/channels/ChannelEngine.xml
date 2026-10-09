@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="ChannelEngine" extends="Task">
+  <interface>
+    <field id="channels" type="array" />
+    <field id="previewChannel" type="assocarray" />
+    <field id="generationProgress" type="integer" value="0" />
+    <field id="generationTotal" type="integer" value="0" />
+    <field id="generationComplete" type="boolean" value="false" />
+    <field id="scanPhase" type="string" />
+    <field id="scanProgress" type="integer" value="0" />
+    <field id="scanTotal" type="integer" value="0" />
+    <field id="error" type="string" />
+  </interface>
+</component>

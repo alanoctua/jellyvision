@@ -1,0 +1,9 @@
+name: Feature Request
+description: Suggest a new feature
+labels: feature
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe a new JellyVision feature and the problem it would solve.

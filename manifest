@@ -1,0 +1,33 @@
+## Channel Details
+
+title=JellyVision
+major_version=0
+minor_version=4
+build_version=3
+
+### Main Menu Icons / Channel Poster Artwork
+
+mm_icon_focus_fhd=pkg:/images/jellyvision-poster_fhd.jpg
+mm_icon_focus_hd=pkg:/images/jellyvision-poster_hd.jpg
+mm_icon_focus_sd=pkg:/images/jellyvision-poster_sd.jpg
+
+### Splash Screen + Loading Screen Artwork
+
+splash_screen_fhd=pkg:/images/jellyvision-splash_fhd.jpg
+splash_screen_hd=pkg:/images/jellyvision-splash_hd.jpg
+splash_screen_sd=pkg:/images/jellyvision-splash_sd.jpg
+
+splash_min_time=1000
+
+ui_resolutions=fhd
+
+confirm_partner_button=1
+
+supports_input_launch=1
+
+bs_const=printReg=false
+
+# Transport/voice control support
+supports_voice_roinput=1
+supports_etc_seek=1
+supports_etc_next=1

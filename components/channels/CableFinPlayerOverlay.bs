@@ -1,0 +1,340 @@
+import "pkg:/source/channels/ScheduleEngine.bs"
+import "pkg:/source/enums/TimerControl.bs"
+import "pkg:/source/utils/misc.bs"
+
+const CABLEFIN_VISIBLE_ROWS = 5
+const CABLEFIN_GUIDE_WIDTH = 1618
+const CABLEFIN_GUIDE_WINDOW_SECONDS = 7200
+const CABLEFIN_GUIDE_SLOT_SECONDS = 900
+const CABLEFIN_GUIDE_PROGRAMME_COUNT = 64
+
+sub init()
+    m.channelLabel = m.top.findNode("channelLabel")
+    m.programmeTitle = m.top.findNode("programmeTitle")
+    m.programmeTime = m.top.findNode("programmeTime")
+    m.programmeMeta = m.top.findNode("programmeMeta")
+    m.programmeDescription = m.top.findNode("programmeDescription")
+    m.progressFill = m.top.findNode("progressFill")
+    m.clockLabel = m.top.findNode("clockLabel")
+    m.currentTimeLine = m.top.findNode("currentTimeLine")
+    m.buildStatus = m.top.findNode("buildStatus")
+    m.buildProgressTrack = m.top.findNode("buildProgressTrack")
+    m.buildProgressFill = m.top.findNode("buildProgressFill")
+    m.numberBadge = m.top.findNode("numberBadge")
+    m.numberEntry = m.top.findNode("numberEntry")
+    m.refreshTimer = m.top.findNode("refreshTimer")
+    m.digitTimer = m.top.findNode("digitTimer")
+
+    m.rows = []
+    for i = 0 to CABLEFIN_VISIBLE_ROWS - 1
+        m.rows.Push(m.top.findNode(`row${i}`))
+    end for
+
+    m.timelineLabels = []
+    for i = 0 to 8
+        m.timelineLabels.Push(m.top.findNode(`timeline${i}`))
+    end for
+
+    m.channels = []
+    m.focusedIndex = 0
+    m.tunedIndex = 0
+    m.numberBuffer = ""
+    m.tuneNonce = 0
+
+    m.global.observeField("cableFinChannels", "onChannelsChanged")
+    m.global.observeField("cableFinCurrentChannel", "onGlobalCurrentChannelChanged")
+    m.global.observeField("cableFinGenerationProgress", "onGenerationProgressChanged")
+    m.global.observeField("cableFinGenerationTotal", "onGenerationProgressChanged")
+    m.global.observeField("cableFinGenerationComplete", "onGenerationProgressChanged")
+    m.global.observeField("cableFinScanPhase", "onGenerationProgressChanged")
+    m.global.observeField("cableFinScanProgress", "onGenerationProgressChanged")
+    m.global.observeField("cableFinScanTotal", "onGenerationProgressChanged")
+    m.refreshTimer.observeField("fire", "onRefreshTimer")
+    m.digitTimer.observeField("fire", "commitNumber")
+
+    onChannelsChanged()
+    onGlobalCurrentChannelChanged()
+    onGenerationProgressChanged()
+    m.refreshTimer.control = TimerControl.START
+end sub
+
+sub onChannelsChanged()
+    channels = m.global.cableFinChannels
+    if not isValid(channels) then channels = []
+    m.channels = channels
+
+    CableFin_FindTunedIndex()
+    if m.focusedIndex >= m.channels.Count() then m.focusedIndex = m.tunedIndex
+    refresh()
+end sub
+
+sub onGlobalCurrentChannelChanged()
+    channel = m.global.cableFinCurrentChannel
+    if isValid(channel) and isValid(channel.id) then m.top.currentChannel = channel
+end sub
+
+sub onCurrentChannelChanged()
+    CableFin_FindTunedIndex()
+    m.focusedIndex = m.tunedIndex
+    refresh()
+end sub
+
+sub CableFin_FindTunedIndex()
+    m.tunedIndex = -1
+    currentChannel = m.top.currentChannel
+    if not isValid(currentChannel) or not isValid(currentChannel.id) then return
+
+    for i = 0 to m.channels.Count() - 1
+        if m.channels[i].id = currentChannel.id
+            m.tunedIndex = i
+            return
+        end if
+    end for
+end sub
+
+sub onRefreshTimer()
+    refresh()
+end sub
+
+sub refresh()
+    nowSeconds = ChannelSchedule_NowSeconds()
+    m.clockLabel.text = CableFin_FormatClock(nowSeconds)
+    CableFin_UpdateTimeline(nowSeconds)
+    CableFin_UpdateProgramme(nowSeconds)
+    CableFin_UpdateRows(nowSeconds)
+    onGenerationProgressChanged()
+end sub
+
+sub CableFin_UpdateTimeline(nowSeconds as dynamic)
+    m.guideWindowStart = nowSeconds - ChannelSchedule_PositiveModulo(nowSeconds, CABLEFIN_GUIDE_SLOT_SECONDS)
+    m.guideWindowEnd = m.guideWindowStart + CABLEFIN_GUIDE_WINDOW_SECONDS
+
+    for i = 0 to m.timelineLabels.Count() - 1
+        slotTime = m.guideWindowStart + (i * CABLEFIN_GUIDE_SLOT_SECONDS)
+        m.timelineLabels[i].text = CableFin_FormatClock(slotTime)
+    end for
+
+    elapsed = nowSeconds - m.guideWindowStart
+    lineX = 302 + Fix((elapsed * CABLEFIN_GUIDE_WIDTH) / CABLEFIN_GUIDE_WINDOW_SECONDS)
+    m.currentTimeLine.translation = [lineX, 664]
+end sub
+
+sub CableFin_UpdateProgramme(nowSeconds as dynamic)
+    channel = m.top.currentChannel
+    if not isValid(channel) or not isValid(channel.items) or channel.items.Count() = 0 then return
+
+    programmes = ChannelSchedule_BuildWindow(channel.items, channel.seed, nowSeconds, 2, true)
+    if programmes.Count() = 0 then return
+
+    programme = programmes[0]
+    item = programme.item
+    m.channelLabel.text = `CH ${channel.number}  ${UCase(channel.name)}`
+    m.programmeTitle.text = programme.title
+    m.programmeTime.text = `${CableFin_FormatClock(programme.startEpoch)} - ${CableFin_FormatClock(programme.endEpoch)}`
+    m.programmeMeta.text = CableFin_ItemMetadata(item)
+    m.programmeDescription.text = channel.description
+
+    elapsed = nowSeconds - programme.startEpoch
+    if elapsed < 0 then elapsed = 0
+    ratio = elapsed / programme.durationSeconds
+    if ratio > 1 then ratio = 1
+    m.progressFill.width = Fix(650 * ratio)
+    if m.progressFill.width < 1 then m.progressFill.width = 1
+end sub
+
+sub CableFin_UpdateRows(nowSeconds as dynamic)
+    if m.channels.Count() = 0
+        for each row in m.rows
+            row.channelData = invalid
+        end for
+        return
+    end if
+
+    maxStart = m.channels.Count() - CABLEFIN_VISIBLE_ROWS
+    if maxStart < 0 then maxStart = 0
+    startIndex = m.focusedIndex - 2
+    if startIndex < 0 then startIndex = 0
+    if startIndex > maxStart then startIndex = maxStart
+
+    for rowIndex = 0 to CABLEFIN_VISIBLE_ROWS - 1
+        channelIndex = startIndex + rowIndex
+        row = m.rows[rowIndex]
+        if channelIndex >= m.channels.Count()
+            row.channelData = invalid
+        else
+            channel = m.channels[channelIndex]
+            schedule = ChannelSchedule_BuildWindow(channel.items, channel.seed, nowSeconds, CABLEFIN_GUIDE_PROGRAMME_COUNT, true)
+            visibleProgrammes = []
+            for each programme in schedule
+                if programme.startEpoch >= m.guideWindowEnd then exit for
+                if programme.endEpoch > m.guideWindowStart
+                    visibleProgrammes.Push({
+                        title: programme.title,
+                        startEpoch: programme.startEpoch,
+                        endEpoch: programme.endEpoch,
+                        isCurrent: programme.isCurrent
+                    })
+                end if
+            end for
+
+            row.selected = channelIndex = m.focusedIndex
+            row.tuned = channelIndex = m.tunedIndex
+            row.channelData = {
+                number: channel.number,
+                name: channel.name,
+                programmes: visibleProgrammes,
+                windowStart: m.guideWindowStart,
+                windowEnd: m.guideWindowEnd
+            }
+        end if
+    end for
+end sub
+
+sub moveSelection(direction as integer)
+    if m.channels.Count() = 0 then return
+    m.focusedIndex += direction
+    if m.focusedIndex < 0 then m.focusedIndex = m.channels.Count() - 1
+    if m.focusedIndex >= m.channels.Count() then m.focusedIndex = 0
+    refresh()
+end sub
+
+sub stepChannel(direction as integer)
+    if m.channels.Count() = 0 then return
+    targetIndex = m.tunedIndex + direction
+    if targetIndex < 0 then targetIndex = m.channels.Count() - 1
+    if targetIndex >= m.channels.Count() then targetIndex = 0
+    CableFin_RequestTune(m.channels[targetIndex])
+end sub
+
+sub tuneFocused()
+    if m.focusedIndex < 0 or m.focusedIndex >= m.channels.Count() then return
+    CableFin_RequestTune(m.channels[m.focusedIndex])
+end sub
+
+sub CableFin_RequestTune(channel as object)
+    m.tuneNonce++
+    m.global.cableFinTuneRequest = { channel: channel, nonce: m.tuneNonce }
+end sub
+
+sub appendDigit(digit as string)
+    if digit = "" then return
+    if m.numberBuffer.Len() >= 3 then m.numberBuffer = ""
+    m.numberBuffer += digit
+    m.numberEntry.text = `Channel ${m.numberBuffer}`
+    m.numberEntry.visible = true
+    m.numberBadge.visible = true
+    m.digitTimer.control = TimerControl.STOP
+    m.digitTimer.control = TimerControl.START
+
+    if m.numberBuffer.Len() = 3 then commitNumber()
+end sub
+
+function hasPendingNumber() as boolean
+    return m.numberBuffer <> ""
+end function
+
+sub commitNumber()
+    m.digitTimer.control = TimerControl.STOP
+    requestedNumber = m.numberBuffer
+    m.numberBuffer = ""
+    m.numberEntry.visible = false
+    m.numberBadge.visible = false
+    if requestedNumber = "" then return
+
+    for each channel in m.channels
+        if channel.number = requestedNumber
+            CableFin_RequestTune(channel)
+            return
+        end if
+    end for
+
+    m.numberEntry.text = `Channel ${requestedNumber} not ready`
+    m.numberEntry.visible = true
+    m.numberBadge.visible = true
+    m.digitTimer.duration = 1.4
+    m.digitTimer.control = TimerControl.START
+end sub
+
+sub onGenerationProgressChanged()
+    progress = m.global.cableFinGenerationProgress
+    total = m.global.cableFinGenerationTotal
+    if total <= 0 then total = progress
+    if m.global.cableFinGenerationComplete
+        m.buildProgressTrack.visible = false
+        m.buildProgressFill.visible = false
+        ghostModeEnabled = chainLookupReturn(m.global.session, "user.settings.`cablefin.ghostMode`", true)
+        ghostModeLabel = ghostModeEnabled ? "  •  GHOST MODE ON" : "  •  HISTORY ON"
+        m.buildStatus.text = `${total} COMPLETE CHANNELS READY${ghostModeLabel}`
+    else
+        m.buildProgressTrack.visible = true
+        m.buildProgressFill.visible = true
+
+        phase = m.global.cableFinScanPhase
+        scanProgress = m.global.cableFinScanProgress
+        scanTotal = m.global.cableFinScanTotal
+        if not isValid(phase) or phase = "" then phase = "Scanning the complete Jellyfin library"
+
+        if scanTotal > 0
+            m.buildStatus.text = `${UCase(phase)}  •  ${scanProgress} / ${scanTotal}`
+            fillWidth = Fix((1582 * scanProgress) / scanTotal)
+            if fillWidth < 1 then fillWidth = 1
+            if fillWidth > 1582 then fillWidth = 1582
+            m.buildProgressFill.width = fillWidth
+        else if scanProgress > 0
+            m.buildStatus.text = `${UCase(phase)}  •  ${scanProgress} FOUND`
+            m.buildProgressFill.width = 1
+        else
+            m.buildStatus.text = UCase(phase)
+            m.buildProgressFill.width = 1
+        end if
+    end if
+end sub
+
+function CableFin_ItemMetadata(item as object) as string
+    itemType = LCase(item.LookupCI("Type") ?? "video")
+    mediaLabel = itemType = "episode" ? "TV EPISODE" : UCase(itemType)
+
+    year = item.LookupCI("ProductionYear")
+    if isValid(year) then mediaLabel += `  •  ${year}`
+
+    genres = item.LookupCI("Genres")
+    if isValid(genres) and genres.Count() > 0
+        genreText = ""
+        maxGenres = genres.Count() - 1
+        if maxGenres > 2 then maxGenres = 2
+        for i = 0 to maxGenres
+            if genreText <> "" then genreText += ", "
+            genreText += genres[i]
+        end for
+        mediaLabel += `  •  ${genreText}`
+    end if
+
+    return mediaLabel
+end function
+
+function CableFin_FormatClock(epochSeconds as dynamic) as string
+    value = CreateObject("roDateTime")
+    try
+        value.FromSecondsLong(epochSeconds)
+    catch e
+        value.FromSeconds(epochSeconds)
+    end try
+    value.ToLocalTime()
+
+    hour = value.GetHours()
+    minute = value.GetMinutes()
+    minuteText = minute.ToStr()
+    if minute < 10 then minuteText = `0${minuteText}`
+
+    if isValid(m.global.device.clockFormat) and LCase(m.global.device.clockFormat) = "24h"
+        hourText = hour.ToStr()
+        if hour < 10 then hourText = `0${hourText}`
+        return `${hourText}:${minuteText}`
+    end if
+
+    suffix = "AM"
+    if hour >= 12 then suffix = "PM"
+    displayHour = hour mod 12
+    if displayHour = 0 then displayHour = 12
+    return `${displayHour}:${minuteText} ${suffix}`
+end function

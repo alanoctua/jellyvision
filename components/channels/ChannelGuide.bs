@@ -1,0 +1,289 @@
+import "pkg:/source/api/Image.bs"
+import "pkg:/source/channels/ScheduleEngine.bs"
+import "pkg:/source/enums/TaskControl.bs"
+import "pkg:/source/enums/TimerControl.bs"
+import "pkg:/source/utils/deviceCapabilities.bs"
+import "pkg:/source/utils/misc.bs"
+
+sub init()
+    m.top.overhangTitle = "JellyVision"
+    m.top.optionsAvailable = true
+
+    m.guide = m.top.findNode("guide")
+    m.loadingLabel = m.top.findNode("loadingLabel")
+    m.clockLabel = m.top.findNode("clockLabel")
+    m.refreshTimer = m.top.findNode("refreshTimer")
+    m.statusLabel = m.top.findNode("statusLabel")
+
+    m.guide.visible = false
+    m.guide.observeField("rowItemSelected", "onProgrammeSelected")
+    m.refreshTimer.observeField("fire", "onRefreshTimer")
+
+    m.channelEngine = CreateObject("roSGNode", "ChannelEngine")
+    m.channelEngine.observeField("channels", "onChannelsLoaded")
+    m.channelEngine.observeField("previewChannel", "onPreviewChannelLoaded")
+    m.channelEngine.observeField("generationProgress", "onGenerationProgress")
+    m.channelEngine.observeField("generationTotal", "onGenerationTotal")
+    m.channelEngine.observeField("generationComplete", "onGenerationComplete")
+    m.channelEngine.observeField("scanPhase", "onScanStatusChanged")
+    m.channelEngine.observeField("scanProgress", "onScanStatusChanged")
+    m.channelEngine.observeField("scanTotal", "onScanStatusChanged")
+    m.channelEngine.observeField("error", "onChannelError")
+
+    m.postTask = CreateObject("roSGNode", "PostTask")
+    m.isFirstRun = true
+    m.hasAutoTuned = false
+    m.channels = []
+end sub
+
+sub loadChannels()
+    m.loadingLabel.visible = true
+    m.loadingLabel.text = "Scanning your complete Jellyfin library. This may take a while..."
+    m.guide.visible = false
+    m.global.cableFinChannels = []
+    m.global.cableFinGenerationProgress = 0
+    m.global.cableFinGenerationTotal = 0
+    m.global.cableFinGenerationComplete = false
+    m.global.cableFinScanPhase = "Finding a live-action comedy preview"
+    m.global.cableFinScanProgress = 0
+    m.global.cableFinScanTotal = 0
+    m.hasAutoTuned = false
+    m.channelEngine.control = TaskControl.STOP
+    m.channelEngine.control = TaskControl.RUN
+end sub
+
+sub onPreviewChannelLoaded()
+    previewChannel = m.channelEngine.previewChannel
+    if m.hasAutoTuned or not isValid(previewChannel) then return
+    if not isValid(previewChannel.items) or previewChannel.items.Count() = 0 then return
+
+    ' Publish the temporary channel immediately so the player and number-pad
+    ' overlay have content while this same ChannelEngine task keeps scanning.
+    m.channels = [previewChannel]
+    m.global.cableFinChannels = [previewChannel]
+    m.loadingLabel.text = "Starting a comedy preview while the complete library scan continues..."
+    m.hasAutoTuned = true
+    m.top.channelSelected = previewChannel
+end sub
+
+sub onChannelsLoaded()
+    channels = m.channelEngine.channels
+    if not isValid(channels) or channels.Count() = 0 then return
+
+    m.channels = channels
+    m.global.cableFinChannels = channels
+    m.global.cableFinGenerationProgress = channels.Count()
+    m.loadingLabel.visible = false
+    m.guide.visible = true
+    ChannelGuide_RebuildRows()
+    m.guide.setFocus(true)
+    m.refreshTimer.control = TimerControl.START
+
+    ' If a strict comedy preview could not be found, start the first permanent
+    ' channel now. Otherwise leave the preview playing until the viewer tunes.
+    if not m.hasAutoTuned then ChannelGuide_AutoTuneFirstAvailable()
+end sub
+
+sub ChannelGuide_AutoTuneFirstAvailable()
+    for each channel in m.channels
+        if not channel.unavailable and isValid(channel.items) and channel.items.Count() > 0
+            m.hasAutoTuned = true
+            m.top.channelSelected = channel
+            return
+        end if
+    end for
+end sub
+
+sub onGenerationProgress()
+    progress = m.channelEngine.generationProgress
+    total = m.channelEngine.generationTotal
+    if total <= 0 then total = progress
+    m.global.cableFinGenerationProgress = progress
+    m.global.cableFinGenerationTotal = total
+    if not m.guide.visible then m.loadingLabel.text = `Building complete channel schedules: ${progress} of ${total}`
+end sub
+
+sub onScanStatusChanged()
+    phase = m.channelEngine.scanPhase
+    progress = m.channelEngine.scanProgress
+    total = m.channelEngine.scanTotal
+    if not isValid(phase) or phase = "" then phase = "Scanning the complete Jellyfin library"
+
+    m.global.cableFinScanPhase = phase
+    m.global.cableFinScanProgress = progress
+    m.global.cableFinScanTotal = total
+
+    if m.guide.visible then return
+
+    if total > 0
+        m.loadingLabel.text = `${phase}: ${progress} of ${total}`
+    else if progress > 0
+        m.loadingLabel.text = `${phase}: ${progress} found so far`
+    else
+        m.loadingLabel.text = `${phase}...`
+    end if
+end sub
+
+sub onGenerationTotal()
+    m.global.cableFinGenerationTotal = m.channelEngine.generationTotal
+end sub
+
+sub onGenerationComplete()
+    m.global.cableFinGenerationComplete = m.channelEngine.generationComplete
+    if m.channelEngine.generationComplete
+        total = m.channelEngine.generationTotal
+        m.statusLabel.text = `${total} complete channels ready  •  OK: tune in  •  *: account and server`
+    end if
+end sub
+
+sub onChannelError()
+    errorMessage = m.channelEngine.error
+    if not isValid(errorMessage) or errorMessage = "" then return
+
+    m.guide.visible = false
+    m.loadingLabel.visible = true
+    m.loadingLabel.text = errorMessage
+end sub
+
+sub onRefreshTimer()
+    if m.channels.Count() = 0 then return
+    ChannelGuide_RebuildRows()
+end sub
+
+sub ChannelGuide_RebuildRows()
+    nowSeconds = ChannelSchedule_NowSeconds()
+    m.clockLabel.text = ChannelGuide_FormatClock(nowSeconds)
+
+    focusedRow = 0
+    focusedColumn = 0
+    if isValid(m.guide.rowItemFocused) and m.guide.rowItemFocused.Count() = 2
+        focusedRow = m.guide.rowItemFocused[0]
+        focusedColumn = m.guide.rowItemFocused[1]
+    end if
+
+    guideContent = CreateObject("roSGNode", "ContentNode")
+
+    for each channel in m.channels
+        row = guideContent.CreateChild("ContentNode")
+        unavailableMarker = channel.unavailable ? "  •  No matching tagged media" : ""
+        row.title = `CH ${channel.number}   ${channel.name}${unavailableMarker}`
+
+        programmes = ChannelSchedule_BuildWindow(channel.items, channel.seed, nowSeconds, 4, true)
+        if programmes.Count() = 0
+            programmeNode = row.CreateChild("ContentNode")
+            programmeNode.title = "No matching tagged content"
+            programmeNode.shortDescriptionLine1 = "CHANNEL UNAVAILABLE"
+            programmeNode.description = "Update this media's genres, tags, or year in Jellyfin"
+            programmeNode.AddFields({
+                isCurrent: false,
+                channelId: channel.id
+            })
+        end if
+        for each programme in programmes
+            programmeNode = row.CreateChild("ContentNode")
+            programmeNode.title = programme.title
+            programmeNode.shortDescriptionLine1 = ChannelGuide_ProgrammeTime(programme)
+            programmeNode.description = ChannelGuide_ProgrammeDetail(programme.item)
+            programmeNode.AddFields({
+                isCurrent: programme.isCurrent,
+                startEpoch: programme.startEpoch,
+                endEpoch: programme.endEpoch,
+                channelId: channel.id
+            })
+        end for
+    end for
+
+    m.guide.content = guideContent
+
+    if focusedRow >= m.channels.Count() then focusedRow = 0
+    if focusedColumn > 3 then focusedColumn = 0
+    m.guide.jumpToRowItem = [focusedRow, focusedColumn]
+end sub
+
+sub onProgrammeSelected()
+    focused = m.guide.rowItemFocused
+    if not isValid(focused) or focused.Count() <> 2 then return
+
+    rowIndex = focused[0]
+    if rowIndex < 0 or rowIndex >= m.channels.Count() then return
+
+    ' Selecting any programme cell tunes the row's channel to what is airing now.
+    ' ChannelPlayer recalculates at selection time so a guide refresh boundary
+    ' cannot produce a stale offset.
+    m.top.channelSelected = m.channels[rowIndex]
+end sub
+
+function ChannelGuide_ProgrammeTime(programme as object) as string
+    prefix = programme.isCurrent ? "ON NOW  " : ""
+    return `${prefix}${ChannelGuide_FormatClock(programme.startEpoch)} - ${ChannelGuide_FormatClock(programme.endEpoch)}`
+end function
+
+function ChannelGuide_ProgrammeDetail(item as object) as string
+    itemType = LCase(item.LookupCI("Type") ?? "")
+    if itemType = "movie"
+        year = item.LookupCI("ProductionYear")
+        if isValid(year) then return `Movie  •  ${year}`
+        return "Movie"
+    end if
+
+    if itemType = "episode" then return "Episode"
+    return "Video"
+end function
+
+function ChannelGuide_FormatClock(epochSeconds as dynamic) as string
+    value = CreateObject("roDateTime")
+    try
+        value.FromSecondsLong(epochSeconds)
+    catch e
+        value.FromSeconds(epochSeconds)
+    end try
+    value.ToLocalTime()
+
+    hour = value.GetHours()
+    minute = value.GetMinutes()
+    minuteText = minute.ToStr()
+    if minute < 10 then minuteText = `0${minuteText}`
+
+    if isValid(m.global.device.clockFormat) and LCase(m.global.device.clockFormat) = "24h"
+        hourText = hour.ToStr()
+        if hour < 10 then hourText = `0${hourText}`
+        return `${hourText}:${minuteText}`
+    end if
+
+    suffix = "AM"
+    if hour >= 12 then suffix = "PM"
+    displayHour = hour mod 12
+    if displayHour = 0 then displayHour = 12
+    return `${displayHour}:${minuteText} ${suffix}`
+end function
+
+sub OnScreenShown()
+    scene = m.top.getScene()
+    overhang = scene.findNode("overhang")
+    if isValid(overhang)
+        overhang.visible = true
+        overhang.title = "JellyVision"
+        overhang.currentUserProfileImage = UserImageURL(m.global.session.user.id)
+        overhang.currentUser = m.global.session.user.name
+    end if
+
+    if m.guide.visible
+        m.guide.setFocus(true)
+    else
+        m.top.setFocus(true)
+    end if
+
+    if m.isFirstRun
+        m.isFirstRun = false
+        m.postTask.arrayData = getDeviceCapabilities()
+        m.postTask.apiUrl = "/Sessions/Capabilities/Full"
+        m.postTask.control = TaskControl.RUN
+    end if
+
+    if m.channels.Count() > 0 then m.refreshTimer.control = TimerControl.START
+    if m.channels.Count() > 0 then ChannelGuide_RebuildRows()
+end sub
+
+sub OnScreenHidden()
+    m.refreshTimer.control = TimerControl.STOP
+end sub

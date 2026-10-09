@@ -1,0 +1,114 @@
+import "pkg:/source/utils/misc.bs"
+
+sub init()
+    m.channelCard = m.top.findNode("channelCard")
+    m.programmeBackground = m.top.findNode("programmeBackground")
+    m.programmeGroup = m.top.findNode("programmeGroup")
+    m.tunedMarker = m.top.findNode("tunedMarker")
+    m.number = m.top.findNode("number")
+    m.name = m.top.findNode("name")
+end sub
+
+sub onChannelDataChanged()
+    data = m.top.channelData
+    if not isValid(data)
+        m.top.visible = false
+        return
+    end if
+
+    m.top.visible = true
+    m.number.text = data.number
+    m.name.text = UCase(data.name)
+    onAppearanceChanged()
+end sub
+
+sub onAppearanceChanged()
+    m.tunedMarker.visible = m.top.tuned
+
+    if m.top.selected
+        m.channelCard.color = "0x1948A7FF"
+    else
+        m.channelCard.color = m.top.tuned ? "0x173A8FFF" : "0x102A72FF"
+    end if
+
+    CableFinChannelRow_RenderProgrammes()
+end sub
+
+sub CableFinChannelRow_RenderProgrammes()
+    childCount = m.programmeGroup.getChildCount()
+    if childCount > 0 then m.programmeGroup.removeChildrenIndex(childCount, 0)
+
+    data = m.top.channelData
+    if not isValid(data) then return
+
+    programmes = data.LookupCI("programmes")
+    windowStart = data.LookupCI("windowStart")
+    windowEnd = data.LookupCI("windowEnd")
+    if not isValid(programmes) or not isValid(windowStart) or not isValid(windowEnd) or windowEnd <= windowStart
+        CableFinChannelRow_AddEmptyCell("No programme available")
+        return
+    end if
+
+    if programmes.Count() = 0
+        CableFinChannelRow_AddEmptyCell("No programme available")
+        return
+    end if
+
+    guideWidth = 1618
+    windowDuration = windowEnd - windowStart
+    for each programme in programmes
+        visibleStart = programme.startEpoch
+        if visibleStart < windowStart then visibleStart = windowStart
+        visibleEnd = programme.endEpoch
+        if visibleEnd > windowEnd then visibleEnd = windowEnd
+
+        if visibleEnd > visibleStart
+            left = Fix(((visibleStart - windowStart) * guideWidth) / windowDuration)
+            right = Fix(((visibleEnd - windowStart) * guideWidth) / windowDuration)
+            width = right - left - 2
+            if width < 2 then width = 2
+
+            card = CreateObject("roSGNode", "Rectangle")
+            card.translation = [left, 0]
+            card.width = width
+            card.height = 56
+            card.color = CableFinChannelRow_ProgrammeColor(programme)
+            m.programmeGroup.appendChild(card)
+
+            label = CreateObject("roSGNode", "Label")
+            label.translation = [left + 10, 10]
+            label.width = width - 20
+            if label.width < 2 then label.width = 2
+            label.height = 36
+            label.text = programme.title
+            label.font = "font:SmallBoldSystemFont"
+            label.color = m.top.selected ? "0x08131DFF" : "0xFFFFFFFF"
+            label.ellipsisText = "..."
+            m.programmeGroup.appendChild(label)
+        end if
+    end for
+end sub
+
+function CableFinChannelRow_ProgrammeColor(programme as object) as string
+    if m.top.selected then return "0x42C4EBFF"
+    if programme.isCurrent and m.top.tuned then return "0x245466FF"
+    if programme.isCurrent then return "0x414B58FF"
+    return "0x303642FF"
+end function
+
+sub CableFinChannelRow_AddEmptyCell(message as string)
+    card = CreateObject("roSGNode", "Rectangle")
+    card.width = 1618
+    card.height = 56
+    card.color = m.top.selected ? "0x42C4EBFF" : "0x303642FF"
+    m.programmeGroup.appendChild(card)
+
+    label = CreateObject("roSGNode", "Label")
+    label.translation = [12, 10]
+    label.width = 1588
+    label.height = 36
+    label.text = message
+    label.font = "font:SmallBoldSystemFont"
+    label.color = m.top.selected ? "0x08131DFF" : "0xB8C1CCFF"
+    m.programmeGroup.appendChild(label)
+end sub

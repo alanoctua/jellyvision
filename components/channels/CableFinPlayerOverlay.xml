@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="CableFinPlayerOverlay" extends="Group">
+  <interface>
+    <field id="currentChannel" type="assocarray" onChange="onCurrentChannelChanged" />
+    <function name="moveSelection" />
+    <function name="tuneFocused" />
+    <function name="stepChannel" />
+    <function name="appendDigit" />
+    <function name="hasPendingNumber" />
+    <function name="commitNumber" />
+    <function name="refresh" />
+  </interface>
+  <children>
+    <!-- Right-side programme panel; the Video node occupies the upper-left. -->
+    <Rectangle translation="[1180,0]" width="740" height="620" color="0x05080DFF" />
+    <Rectangle translation="[1210,34]" width="6" height="66" color="0x36C8F0FF" />
+    <Label translation="[1232,29]" width="640" height="30" text="JELLYVISION  •  LIVE" font="font:SmallBoldSystemFont" color="0x36C8F0FF" />
+    <Label id="channelLabel" translation="[1232,60]" width="640" height="42" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" ellipsisText="..." />
+    <Label id="programmeTitle" translation="[1210,128]" width="660" height="96" numLines="2" wrap="true" font="font:LargeBoldSystemFont" color="0xFFFFFFFF" ellipsisText="..." />
+    <Label id="programmeTime" translation="[1212,226]" width="650" height="35" font="font:MediumBoldSystemFont" color="0xEAF0F5FF" />
+    <Label id="programmeMeta" translation="[1212,270]" width="650" height="35" font="font:SmallBoldSystemFont" color="0xB8C5D0FF" ellipsisText="..." />
+    <Rectangle translation="[1212,325]" width="650" height="2" color="0x46515CFF" />
+    <Label id="programmeDescription" translation="[1212,346]" width="650" height="100" numLines="3" wrap="true" font="font:SmallSystemFont" color="0xDCE4EAFF" ellipsisText="..." />
+    <Rectangle translation="[1212,482]" width="650" height="10" color="0x26323CFF" cornerRadius="5" />
+    <Rectangle id="progressFill" translation="[1212,482]" width="1" height="10" color="0xFF715BFF" cornerRadius="5" />
+    <Label id="remoteHint" translation="[1212,516]" width="650" height="70" numLines="2" wrap="true" text="↑↓ Browse  •  OK Tune  •  * Full screen&#10;Number pad: enter a channel" font="font:SmallSystemFont" color="0x91A3B2FF" />
+
+    <!-- Bottom guide closely follows the supplied television-guide reference. -->
+    <Rectangle translation="[0,620]" width="1920" height="460" color="0x05080DFF" />
+    <Rectangle translation="[0,664]" width="300" height="62" color="0x24459BFF" />
+    <Label translation="[18,677]" width="265" height="34" text="CHANNEL" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="clockLabel" translation="[18,627]" width="250" height="32" font="font:SmallBoldSystemFont" color="0xFF715BFF" />
+    <Label id="timeline0" translation="[308,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFF715BFF" />
+    <Label id="timeline1" translation="[510,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline2" translation="[712,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline3" translation="[915,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline4" translation="[1117,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline5" translation="[1319,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline6" translation="[1522,677]" width="186" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline7" translation="[1724,677]" width="180" height="34" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="timeline8" translation="[1810,677]" width="94" height="34" horizAlign="right" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="buildStatus" translation="[302,627]" width="1582" height="27" horizAlign="right" font="font:SmallBoldSystemFont" color="0x8FDFF5FF" ellipsisText="..." />
+    <Rectangle id="buildProgressTrack" translation="[302,655]" width="1582" height="5" color="0x263D49FF" cornerRadius="2" />
+    <Rectangle id="buildProgressFill" translation="[302,655]" width="1" height="5" color="0x36C8F0FF" cornerRadius="2" />
+
+    <CableFinChannelRow id="row0" translation="[0,730]" />
+    <CableFinChannelRow id="row1" translation="[0,790]" />
+    <CableFinChannelRow id="row2" translation="[0,850]" />
+    <CableFinChannelRow id="row3" translation="[0,910]" />
+    <CableFinChannelRow id="row4" translation="[0,970]" />
+
+    <Rectangle translation="[302,664]" width="1" height="366" color="0x69737D88" />
+    <Rectangle translation="[504,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle translation="[706,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle translation="[909,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle translation="[1111,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle translation="[1313,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle translation="[1516,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle translation="[1718,664]" width="1" height="366" color="0x69737D66" />
+    <Rectangle id="currentTimeLine" translation="[302,664]" width="3" height="366" color="0xFF715BCC" />
+
+    <Rectangle id="numberBadge" translation="[1570,550]" width="300" height="58" color="0x142333EE" cornerRadius="8" visible="false" />
+    <Label id="numberEntry" translation="[1586,558]" width="268" height="40" horizAlign="center" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" visible="false" />
+
+    <Timer id="refreshTimer" duration="15" repeat="true" />
+    <Timer id="digitTimer" duration="1.2" repeat="false" />
+  </children>
+</component>

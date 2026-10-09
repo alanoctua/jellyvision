@@ -1,0 +1,618 @@
+import "pkg:/source/api/baserequest.bs"
+import "pkg:/source/channels/ScheduleEngine.bs"
+import "pkg:/source/utils/misc.bs"
+
+const CHANNEL_ENGINE_PAGE_SIZE = 500
+
+sub init()
+    m.top.functionName = "loadGeneratedChannels"
+end sub
+
+' Start one strictly matched live-action comedy series quickly, then read every
+' Jellyfin page before publishing the permanent lineup. The preview is separate
+' from final channel assignment and never weakens the full-library rules.
+sub loadGeneratedChannels()
+    m.top.error = ""
+    m.top.previewChannel = {}
+    m.top.generationComplete = false
+    m.top.generationProgress = 0
+    m.top.scanPhase = "Starting the complete Jellyfin scan"
+    m.top.scanProgress = 0
+    m.top.scanTotal = 0
+
+    userId = m.global.session.user.id
+    if not isValid(userId) or userId = ""
+        m.top.error = "No signed-in Jellyfin user was found."
+        return
+    end if
+
+    previewChannel = ChannelEngine_LoadComedyPreview(userId)
+    if isValid(previewChannel) then m.top.previewChannel = previewChannel
+
+    seriesMetadata = ChannelEngine_LoadSeriesMetadata(userId)
+    if not isValid(seriesMetadata)
+        m.top.error = "Jellyfin did not return complete series metadata. Check the server connection and user permissions."
+        return
+    end if
+
+    animeLibraryItemIds = ChannelEngine_LoadAnimeLibraryItemIds(userId)
+
+    rawPlayableItems = ChannelEngine_LoadAllItems(userId, "Movie,Episode", "Genres,Tags,RunTimeTicks,MediaType,ProductionYear,SeriesName,ParentIndexNumber,IndexNumber,Path", "Scanning every movie and TV episode")
+    if not isValid(rawPlayableItems)
+        m.top.error = "Jellyfin did not return the complete media library. Check the server connection and user permissions."
+        return
+    end if
+
+    playableItems = []
+    m.top.scanPhase = "Reading genres, tags, paths, and series years"
+    m.top.scanProgress = 0
+    m.top.scanTotal = rawPlayableItems.Count()
+    for each item in rawPlayableItems
+        if ChannelEngine_IsPlayable(item)
+            ChannelEngine_EnrichClassification(item, seriesMetadata, animeLibraryItemIds)
+            playableItems.Push(item)
+        end if
+        if (playableItems.Count() mod 250) = 0 then m.top.scanProgress = playableItems.Count()
+    end for
+    m.top.scanProgress = rawPlayableItems.Count()
+
+    if playableItems.Count() = 0
+        m.top.error = "No movies or TV episodes were found in this Jellyfin library."
+        return
+    end if
+
+    definitions = ChannelEngine_Definitions()
+    m.top.generationTotal = definitions.Count()
+    m.top.scanPhase = "Assigning the complete library to channels"
+    m.top.scanProgress = 0
+    m.top.scanTotal = playableItems.Count()
+    assignmentBuckets = ChannelEngine_AssignItems(playableItems, definitions)
+    channels = []
+
+    m.top.scanPhase = "Building the complete channel schedule"
+    m.top.scanProgress = 0
+    m.top.scanTotal = definitions.Count()
+    for i = 0 to definitions.Count() - 1
+        definition = definitions[i]
+        channels.Push(ChannelEngine_BuildChannel(assignmentBuckets[definition.id], definition))
+        m.top.generationProgress = i + 1
+        m.top.scanProgress = i + 1
+    end for
+
+    m.top.scanPhase = "All Jellyfin content scanned"
+    m.top.channels = channels
+    m.top.generationComplete = true
+end sub
+
+' This intentionally uses two small requests rather than waiting for the complete
+' scan: one page of comedy series, followed by episodes for one randomly selected
+' live-action series. If no strict match exists, JellyVision simply keeps scanning.
+function ChannelEngine_LoadComedyPreview(userId as string) as dynamic
+    m.top.scanPhase = "Finding a live-action comedy preview"
+    m.top.scanProgress = 0
+    m.top.scanTotal = 0
+
+    params = {
+        Recursive: true,
+        IncludeItemTypes: "Series",
+        Genres: "Comedy",
+        Fields: "Genres,Tags,ProductionYear,Path",
+        SortBy: "Random",
+        Limit: 64,
+        EnableTotalRecordCount: false,
+        EnableImages: false,
+        EnableUserData: false,
+        ImageTypeLimit: 0
+    }
+
+    request = APIRequest(`Users/${userId}/Items`, params)
+    if not isValid(request) then return invalid
+
+    response = getJson(request)
+    if not isValid(response) or not isValid(response.Items) then return invalid
+
+    comedySeries = []
+    for each series in response.Items
+        terms = []
+        ChannelEngine_AppendUniqueTerms(terms, series.LookupCI("Genres"))
+        ChannelEngine_AppendUniqueTerms(terms, series.LookupCI("Tags"))
+        ChannelEngine_AppendPathTerms(terms, series.LookupCI("Path"))
+        series.cableFinClassificationTerms = terms
+
+        isComedy = ChannelEngine_HasClassificationTerm(series, ["comedy", "sitcom"])
+        isAnimated = ChannelEngine_HasClassificationTerm(series, ["anime", "animation"])
+        if isComedy and not isAnimated then comedySeries.Push(series)
+    end for
+
+    m.top.scanProgress = comedySeries.Count()
+    m.top.scanTotal = comedySeries.Count()
+    if comedySeries.Count() = 0 then return invalid
+
+    previewNow = ChannelSchedule_NowSeconds()
+    startIndex = ChannelSchedule_PositiveModulo(previewNow, comedySeries.Count())
+    maximumAttempts = comedySeries.Count()
+    if maximumAttempts > 12 then maximumAttempts = 12
+
+    for attempt = 0 to maximumAttempts - 1
+        seriesIndex = (startIndex + attempt) mod comedySeries.Count()
+        selectedSeries = comedySeries[seriesIndex]
+        seriesId = selectedSeries.LookupCI("Id")
+        if isValid(seriesId) and seriesId <> ""
+            episodes = ChannelEngine_LoadComedyPreviewEpisodes(userId, seriesId, selectedSeries)
+            if isValid(episodes) and episodes.Count() > 0
+                seed = ChannelSchedule_PositiveModulo(ChannelSchedule_Hash(`${seriesId}:${previewNow}`), 1000000) + 1
+                orderedEpisodes = ChannelSchedule_OrderItems(episodes, seed)
+                seriesName = selectedSeries.LookupCI("Name") ?? "Comedy"
+
+                return {
+                    id: "cablefin-preview",
+                    number: "000",
+                    name: "Comedy Preview",
+                    description: `${seriesName} is playing while JellyVision scans and matches the complete library.`,
+                    color: "0xD8872CFF",
+                    seed: seed,
+                    mediaType: "episode",
+                    items: orderedEpisodes,
+                    itemsAreOrdered: true,
+                    usedFallback: false,
+                    unavailable: false,
+                    isPreview: true
+                }
+            end if
+        end if
+    end for
+
+    return invalid
+end function
+
+function ChannelEngine_LoadComedyPreviewEpisodes(userId as string, seriesId as string, series as object) as dynamic
+    params = {
+        ParentId: seriesId,
+        Recursive: true,
+        IncludeItemTypes: "Episode",
+        Fields: "Genres,Tags,RunTimeTicks,MediaType,ProductionYear,SeriesName,ParentIndexNumber,IndexNumber,Path",
+        SortBy: "SortName",
+        SortOrder: "Ascending",
+        Limit: 64,
+        EnableTotalRecordCount: false,
+        EnableImages: false,
+        EnableUserData: false,
+        ImageTypeLimit: 0
+    }
+
+    request = APIRequest(`Users/${userId}/Items`, params)
+    if not isValid(request) then return invalid
+
+    response = getJson(request)
+    if not isValid(response) or not isValid(response.Items) then return invalid
+
+    seriesTerms = series.LookupCI("cableFinClassificationTerms")
+    seriesYear = series.LookupCI("ProductionYear")
+    playableEpisodes = []
+    for each episode in response.Items
+        if ChannelEngine_IsPlayable(episode)
+            episode.cableFinClassificationTerms = seriesTerms
+            episode.cableFinClassificationYear = seriesYear
+            playableEpisodes.Push(episode)
+        end if
+    end for
+
+    return playableEpisodes
+end function
+
+function ChannelEngine_LoadAllItems(userId as string, itemTypes as string, fields as string, phase as string, parentId = "" as string) as dynamic
+    allItems = []
+    startIndex = 0
+    expectedTotal = 0
+
+    m.top.scanPhase = phase
+    m.top.scanProgress = 0
+    m.top.scanTotal = 0
+
+    while true
+        params = {
+            Recursive: true,
+            IncludeItemTypes: itemTypes,
+            Fields: fields,
+            SortBy: "SortName",
+            SortOrder: "Ascending",
+            StartIndex: startIndex,
+            Limit: CHANNEL_ENGINE_PAGE_SIZE,
+            EnableTotalRecordCount: true,
+            EnableImages: false,
+            EnableUserData: false,
+            ImageTypeLimit: 0
+        }
+        if parentId <> "" then params.ParentId = parentId
+
+        request = APIRequest(`Users/${userId}/Items`, params)
+        if not isValid(request) then return invalid
+
+        response = getJson(request)
+        if not isValid(response) or not isValid(response.Items) then return invalid
+
+        pageCount = response.Items.Count()
+        for each item in response.Items
+            allItems.Push(item)
+        end for
+
+        totalRecordCount = response.LookupCI("TotalRecordCount")
+        if isValid(totalRecordCount)
+            expectedTotal = totalRecordCount
+            m.top.scanTotal = expectedTotal
+        end if
+        m.top.scanProgress = allItems.Count()
+
+        startIndex += pageCount
+        if pageCount = 0 then exit while
+        if expectedTotal > 0 and startIndex >= expectedTotal then exit while
+        if pageCount < CHANNEL_ENGINE_PAGE_SIZE then exit while
+    end while
+
+    return allItems
+end function
+
+' Some Jellyfin setups use a dedicated Anime library but do not tag each title.
+' Treat membership in any user-visible library with "anime" in its name as the
+' same classification signal as an Anime genre or tag.
+function ChannelEngine_LoadAnimeLibraryItemIds(userId as string) as object
+    animeItemIds = {}
+    request = APIRequest("/UserViews", { UserId: userId })
+    if not isValid(request) then return animeItemIds
+
+    response = getJson(request)
+    if not isValid(response) or not isValid(response.Items) then return animeItemIds
+
+    for each view in response.Items
+        viewName = view.LookupCI("Name")
+        viewId = view.LookupCI("Id")
+        if isValid(viewName) and isValid(viewId) and ChannelEngine_ContainsWord(viewName, "anime")
+            phase = `Scanning the ${viewName} library for anime classification`
+            viewItems = ChannelEngine_LoadAllItems(userId, "Movie,Episode,Series", "Path", phase, viewId)
+            if isValid(viewItems)
+                for each item in viewItems
+                    itemId = item.LookupCI("Id")
+                    seriesId = item.LookupCI("SeriesId")
+                    if isValid(itemId) and itemId <> "" then animeItemIds[itemId] = true
+                    if isValid(seriesId) and seriesId <> "" then animeItemIds[seriesId] = true
+                end for
+            end if
+        end if
+    end for
+
+    return animeItemIds
+end function
+
+function ChannelEngine_LoadSeriesMetadata(userId as string) as dynamic
+    seriesItems = ChannelEngine_LoadAllItems(userId, "Series", "Genres,Tags,ProductionYear,Path", "Scanning every television series")
+    if not isValid(seriesItems) then return invalid
+
+    metadataById = {}
+    for each series in seriesItems
+        seriesId = series.LookupCI("Id")
+        if isValid(seriesId) and seriesId <> "" then metadataById[seriesId] = series
+    end for
+
+    return metadataById
+end function
+
+' Jellyfin commonly stores TV genres/tags on the Series object. Build a private
+' classification view on each episode so channel rules see both episode-level
+' and parent-series metadata without changing playback fields.
+sub ChannelEngine_EnrichClassification(item as object, seriesMetadata as object, animeLibraryItemIds as object)
+    terms = []
+    ChannelEngine_AppendUniqueTerms(terms, item.LookupCI("Genres"))
+    ChannelEngine_AppendUniqueTerms(terms, item.LookupCI("Tags"))
+    ChannelEngine_AppendPathTerms(terms, item.LookupCI("Path"))
+
+    itemId = item.LookupCI("Id")
+    if isValid(itemId) and animeLibraryItemIds.DoesExist(itemId) and not ChannelEngine_ArrayContains(terms, "anime") then terms.Push("anime")
+
+    classificationYear = item.LookupCI("ProductionYear")
+    if LCase(item.LookupCI("Type") ?? "") = "episode"
+        seriesId = item.LookupCI("SeriesId")
+        if isValid(seriesId) and animeLibraryItemIds.DoesExist(seriesId) and not ChannelEngine_ArrayContains(terms, "anime") then terms.Push("anime")
+        if isValid(seriesId) and seriesMetadata.DoesExist(seriesId)
+            series = seriesMetadata[seriesId]
+            ChannelEngine_AppendUniqueTerms(terms, series.LookupCI("Genres"))
+            ChannelEngine_AppendUniqueTerms(terms, series.LookupCI("Tags"))
+            ChannelEngine_AppendPathTerms(terms, series.LookupCI("Path"))
+            ' A TV channel classifies the whole series by its premiere year,
+            ' rather than splitting later seasons across different decades.
+            seriesYear = series.LookupCI("ProductionYear")
+            if isValid(seriesYear) then classificationYear = seriesYear
+        end if
+    end if
+
+    item.cableFinClassificationTerms = terms
+    item.cableFinClassificationYear = classificationYear
+end sub
+
+sub ChannelEngine_AppendUniqueTerms(target as object, source as dynamic)
+    if not isValid(source) then return
+
+    for each value in source
+        normalisedValue = LCase(value.Trim())
+        if normalisedValue <> "" and not ChannelEngine_ArrayContains(target, normalisedValue)
+            target.Push(normalisedValue)
+        end if
+        if ChannelEngine_ContainsWord(normalisedValue, "anime") and not ChannelEngine_ArrayContains(target, "anime") then target.Push("anime")
+        if ChannelEngine_ContainsWord(normalisedValue, "animation") and not ChannelEngine_ArrayContains(target, "animation") then target.Push("animation")
+    end for
+end sub
+
+sub ChannelEngine_AppendPathTerms(target as object, path as dynamic)
+    if not isValid(path) or path = "" then return
+    if ChannelEngine_ContainsWord(path, "anime") and not ChannelEngine_ArrayContains(target, "anime") then target.Push("anime")
+    if ChannelEngine_ContainsWord(path, "animation") and not ChannelEngine_ArrayContains(target, "animation") then target.Push("animation")
+end sub
+
+function ChannelEngine_ContainsWord(value as string, wantedWord as string) as boolean
+    normalised = ChannelEngine_NormalizeWords(value)
+    wanted = ChannelEngine_NormalizeWords(wantedWord)
+    return (" " + normalised + " ").Instr(" " + wanted + " ") >= 0
+end function
+
+function ChannelEngine_NormalizeWords(value as string) as string
+    normalised = LCase(value.Trim())
+    separators = ["/", "\", "-", "_", ".", ",", "(", ")", "[", "]", "&", ":", ";"]
+    for each separator in separators
+        normalised = normalised.Replace(separator, " ")
+    end for
+    while normalised.Instr("  ") >= 0
+        normalised = normalised.Replace("  ", " ")
+    end while
+    return normalised.Trim()
+end function
+
+function ChannelEngine_ArrayContains(values as object, wantedValue as string) as boolean
+    for each value in values
+        if value = wantedValue then return true
+    end for
+    return false
+end function
+
+function ChannelEngine_BuildChannel(assignedItems as object, definition as object) as object
+    channelItems = assignedItems
+    if not isValid(channelItems) then channelItems = []
+
+    channelItems = ChannelSchedule_OrderItems(channelItems, definition.seed)
+
+    return {
+        id: definition.id,
+        number: definition.number,
+        name: definition.name,
+        description: definition.description,
+        color: definition.color,
+        seed: definition.seed,
+        mediaType: definition.mediaType,
+        items: channelItems,
+        itemsAreOrdered: true,
+        usedFallback: false,
+        unavailable: channelItems.Count() = 0
+    }
+end function
+
+' Overview channels 101, 103, and 400 intentionally contain their complete media
+' family. General specialists remain exclusive with one another. Anime has one
+' exclusive genre lane and one exclusive era lane, so genre and decade rules do
+' not steal valid titles from each other.
+function ChannelEngine_AssignItems(playableItems as object, definitions as object) as object
+    buckets = {}
+    assignmentByKey = {}
+    for each definition in definitions
+        buckets[definition.id] = []
+    end for
+
+    processedCount = 0
+    for each item in playableItems
+        for each definition in definitions
+            if ChannelEngine_IsOverviewDefinition(definition) and ChannelEngine_Matches(item, definition)
+                overviewBucket = buckets[definition.id]
+                overviewBucket.Push(item)
+            end if
+        end for
+
+        assignmentKey = ChannelEngine_AssignmentKey(item)
+        assignmentGroups = ["general", "anime-genre", "anime-era"]
+        for each assignmentGroup in assignmentGroups
+            cacheKey = `${assignmentGroup}:${assignmentKey}`
+            selectedDefinitionId = assignmentByKey.LookupCI(cacheKey)
+
+            if not isValid(selectedDefinitionId)
+                selectedDefinition = ChannelEngine_SelectDefinition(item, definitions, assignmentGroup)
+                if isValid(selectedDefinition)
+                    selectedDefinitionId = selectedDefinition.id
+                    assignmentByKey[cacheKey] = selectedDefinitionId
+                end if
+            end if
+
+            if isValid(selectedDefinitionId)
+                bucket = buckets[selectedDefinitionId]
+                bucket.Push(item)
+            end if
+        end for
+
+        processedCount++
+        if (processedCount mod 250) = 0 then m.top.scanProgress = processedCount
+    end for
+    m.top.scanProgress = processedCount
+
+    return buckets
+end function
+
+function ChannelEngine_SelectDefinition(item as object, definitions as object, assignmentGroup as string) as dynamic
+    selectedDefinition = invalid
+    selectedScore = -1
+    selectedTieBreak = 2147483629&
+    assignmentKey = ChannelEngine_AssignmentKey(item)
+
+    for each definition in definitions
+        if not ChannelEngine_IsOverviewDefinition(definition) and ChannelEngine_AssignmentGroup(definition) = assignmentGroup and ChannelEngine_Matches(item, definition)
+            score = ChannelEngine_DefinitionSpecificity(definition)
+            tieBreak = ChannelSchedule_Hash(`${assignmentKey}:${definition.id}`)
+
+            if score > selectedScore or (score = selectedScore and tieBreak < selectedTieBreak)
+                selectedDefinition = definition
+                selectedScore = score
+                selectedTieBreak = tieBreak
+            end if
+        end if
+    end for
+
+    return selectedDefinition
+end function
+
+function ChannelEngine_IsOverviewDefinition(definition as object) as boolean
+    return definition.number = "101" or definition.number = "103" or definition.number = "400"
+end function
+
+function ChannelEngine_AssignmentGroup(definition as object) as string
+    channelNumber = Val(definition.number)
+    if channelNumber >= 401 and channelNumber <= 405 then return "anime-genre"
+    if channelNumber >= 406 and channelNumber <= 410 then return "anime-era"
+    return "general"
+end function
+
+function ChannelEngine_AssignmentKey(item as object) as string
+    if LCase(item.LookupCI("Type") ?? "") = "episode"
+        seriesId = item.LookupCI("SeriesId")
+        if isValid(seriesId) and seriesId <> "" then return seriesId
+    end if
+    return item.LookupCI("Id") ?? "unidentified"
+end function
+
+function ChannelEngine_DefinitionSpecificity(definition as object) as integer
+    score = 0
+    if definition.genres.Count() > 0 then score++
+    score += definition.requiredTerms.Count()
+    if definition.minYear > 0 or definition.maxYear > 0 then score++
+    if definition.minDuration > 0 or definition.maxDuration > 0 then score++
+    return score
+end function
+
+function ChannelEngine_Definitions() as object
+    definitions = []
+
+    ' First ten are available before playback begins. Broad channels deliberately
+    ' receive only items not claimed by a more specific definition.
+    definitions.Push(ChannelEngine_Definition("101", "Random TV", "All live-action television series", "episode", [], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("102", "90s Sitcoms", "Live-action comedy series from 1988 through 1999", "episode", ["comedy", "sitcom"], 1988, 1999, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("103", "Movie Night", "All live-action movies", "movie", [], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("104", "Drama TV", "Live-action drama series", "episode", ["drama"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("105", "Kids & Family TV", "Live-action family and children's series", "episode", ["family", "children", "kids"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("106", "Animated TV", "Animated television series, excluding anime", "episode", ["animation"], 0, 0, 0, 0, ["anime"]))
+    definitions.Push(ChannelEngine_Definition("107", "Documentary TV", "Documentary television series", "episode", ["documentary"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("108", "Comedy TV", "Live-action comedy series outside the 90s Sitcoms channel", "episode", ["comedy", "sitcom"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("109", "Crime & Mystery TV", "Live-action crime and mystery series", "episode", ["crime", "mystery"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("110", "Action & Adventure TV", "Live-action action and adventure series", "episode", ["action", "adventure"], 0, 0, 0, 0, ["anime", "animation"]))
+
+    definitions.Push(ChannelEngine_Definition("111", "Sci-Fi & Fantasy TV", "Live-action science-fiction and fantasy series", "episode", ["science fiction", "sci-fi", "sci fi", "fantasy"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("112", "Horror & Thriller TV", "Live-action horror and thriller series", "episode", ["horror", "thriller"], 0, 0, 0, 0, ["anime", "animation"]))
+
+    ' Film channels. Animation and anime are kept out of every live-action pool.
+    definitions.Push(ChannelEngine_Definition("201", "Kids & Family Movies", "Live-action family films", "movie", ["family", "children", "kids"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("202", "Animated Movies", "Animated films, excluding anime", "movie", ["animation"], 0, 0, 0, 0, ["anime"]))
+    definitions.Push(ChannelEngine_Definition("203", "Documentary & History", "Documentary, history, and biography films", "movie", ["documentary", "history", "biography"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("204", "Horror Movies", "Live-action horror films", "movie", ["horror"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("205", "Sci-Fi & Fantasy Movies", "Live-action science-fiction and fantasy films", "movie", ["science fiction", "sci-fi", "sci fi", "fantasy"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("206", "Crime, Mystery & Thriller", "Live-action crime, mystery, and thriller films", "movie", ["crime", "mystery", "thriller"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("207", "Action & Adventure Movies", "Live-action action and adventure films", "movie", ["action", "adventure"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("208", "Comedy Movies", "Live-action comedy films", "movie", ["comedy"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("209", "Drama & Romance Movies", "Live-action drama and romance films", "movie", ["drama", "romance"], 0, 0, 0, 0, ["anime", "animation"]))
+    definitions.Push(ChannelEngine_Definition("210", "War & Westerns", "Live-action war and western films", "movie", ["war", "western"], 0, 0, 0, 0, ["anime", "animation"]))
+
+    ' Anime series. Genre and decade matches have equal specificity, so a show
+    ' eligible for both is deterministically assigned to one rather than repeated.
+    definitions.Push(ChannelEngine_Definition("400", "Random Anime", "All anime series", "episode", ["anime"], 0, 0, 0, 0))
+    definitions.Push(ChannelEngine_Definition("401", "Comedy Anime", "Comedy anime series", "episode", ["comedy", "sitcom"], 0, 0, 0, 0, [], ["anime"]))
+    definitions.Push(ChannelEngine_Definition("402", "Action Anime", "Action and adventure anime series", "episode", ["action", "adventure"], 0, 0, 0, 0, [], ["anime"]))
+    definitions.Push(ChannelEngine_Definition("403", "Drama Anime", "Drama anime series", "episode", ["drama"], 0, 0, 0, 0, [], ["anime"]))
+    definitions.Push(ChannelEngine_Definition("404", "Feel-Good & Family Anime", "Feel-good and family anime series", "episode", ["feel good", "feel-good", "feelgood", "family", "children", "kids", "slice of life", "slice-of-life", "iyashikei", "heartwarming", "wholesome", "romance", "friendship", "school", "coming of age", "healing"], 0, 0, 0, 0, [], ["anime"]))
+    definitions.Push(ChannelEngine_Definition("405", "Horror & Thriller Anime", "Horror and thriller anime series", "episode", ["horror", "thriller"], 0, 0, 0, 0, [], ["anime"]))
+    definitions.Push(ChannelEngine_Definition("406", "Classic Anime", "Anime series released through 1989", "episode", ["anime"], 0, 1989, 0, 0))
+    definitions.Push(ChannelEngine_Definition("407", "90s Anime", "Anime series from 1990 through 1999", "episode", ["anime"], 1990, 1999, 0, 0))
+    definitions.Push(ChannelEngine_Definition("408", "2000s Anime", "Anime series from 2000 through 2009", "episode", ["anime"], 2000, 2009, 0, 0))
+    definitions.Push(ChannelEngine_Definition("409", "2010s Anime", "Anime series from 2010 through 2019", "episode", ["anime"], 2010, 2019, 0, 0))
+    definitions.Push(ChannelEngine_Definition("410", "Modern Anime", "Anime series released from 2020 onward", "episode", ["anime"], 2020, 0, 0, 0))
+    definitions.Push(ChannelEngine_Definition("420", "Anime Movies", "Anime feature films", "movie", ["anime"], 0, 0, 0, 0))
+
+    return definitions
+end function
+
+function ChannelEngine_Definition(number as string, name as string, description as string, mediaType as string, genres as object, minYear as integer, maxYear as integer, minDuration as integer, maxDuration as integer, excludedTerms = invalid as dynamic, requiredTerms = invalid as dynamic) as object
+    color = "0x176B87FF"
+    if Left(number, 1) = "2" then color = "0x6B4FA1FF"
+    if Left(number, 1) = "3" then color = "0x147B72FF"
+    if Left(number, 1) = "4" then color = "0xB44D5EFF"
+
+    if not isValid(excludedTerms) then excludedTerms = []
+    if not isValid(requiredTerms) then requiredTerms = []
+
+    return {
+        id: `cablefin-${number}`,
+        number: number,
+        name: name,
+        description: description,
+        color: color,
+        seed: (Val(number) * 101) + 17,
+        mediaType: mediaType,
+        genres: genres,
+        excludedTerms: excludedTerms,
+        requiredTerms: requiredTerms,
+        minYear: minYear,
+        maxYear: maxYear,
+        minDuration: minDuration,
+        maxDuration: maxDuration
+    }
+end function
+
+function ChannelEngine_IsPlayable(item as dynamic) as boolean
+    if not isValid(item) then return false
+    if not isValid(item.LookupCI("Id")) then return false
+
+    itemType = LCase(item.LookupCI("Type") ?? "")
+    return itemType = "movie" or itemType = "episode" or itemType = "video"
+end function
+
+function ChannelEngine_Matches(item as object, definition as object) as boolean
+    itemType = LCase(item.LookupCI("Type") ?? "")
+    if definition.mediaType <> "" and itemType <> definition.mediaType then return false
+
+    if definition.genres.Count() > 0 and not ChannelEngine_HasClassificationTerm(item, definition.genres) then return false
+    if definition.excludedTerms.Count() > 0 and ChannelEngine_HasClassificationTerm(item, definition.excludedTerms) then return false
+    for each requiredTerm in definition.requiredTerms
+        if not ChannelEngine_HasClassificationTerm(item, [requiredTerm]) then return false
+    end for
+
+    year = item.LookupCI("cableFinClassificationYear")
+    if not isValid(year) then year = item.LookupCI("ProductionYear")
+    if definition.minYear > 0
+        if not isValid(year) or year < definition.minYear then return false
+    end if
+    if definition.maxYear > 0
+        if not isValid(year) or year > definition.maxYear then return false
+    end if
+
+    duration = ChannelSchedule_ItemDurationSeconds(item)
+    if definition.minDuration > 0 and duration < definition.minDuration then return false
+    if definition.maxDuration > 0 and duration > definition.maxDuration then return false
+
+    return true
+end function
+
+function ChannelEngine_HasClassificationTerm(item as object, wantedTerms as object) as boolean
+    sources = [item.LookupCI("cableFinClassificationTerms"), item.LookupCI("Genres"), item.LookupCI("Tags")]
+
+    for each source in sources
+        if isValid(source)
+            for each sourceTerm in source
+                for each wantedTerm in wantedTerms
+                    if ChannelEngine_ContainsWord(sourceTerm, wantedTerm) then return true
+                end for
+            end for
+        end if
+    end for
+
+    return false
+end function

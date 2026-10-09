@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="ChannelGuide" extends="JFScreen">
+  <interface>
+    <field id="channelSelected" type="assocarray" alwaysNotify="true" />
+    <function name="loadChannels" />
+  </interface>
+  <children>
+    <Rectangle width="1920" height="1080" color="0x101820FF" />
+
+    <Label
+      id="heading"
+      translation="[90,118]"
+      width="1500"
+      height="54"
+      text="JellyVision"
+      font="font:LargeBoldSystemFont"
+      color="0xFFFFFFFF" />
+    <Label
+      id="subheading"
+      translation="[92,174]"
+      width="1500"
+      height="32"
+      text="Your Jellyfin library, playing like live television"
+      font="font:SmallSystemFont"
+      color="0xAAB7C4FF" />
+    <Label
+      id="clockLabel"
+      translation="[1580,132]"
+      width="250"
+      height="42"
+      horizAlign="right"
+      font="font:MediumBoldSystemFont"
+      color="0x8ECDF0FF" />
+
+    <RowList
+      id="guide"
+      translation="[90,232]"
+      width="1740"
+      height="720"
+      itemSize="[1740,136]"
+      rowItemSize="[[385,112]]"
+      rowItemSpacing="[[14,0]]"
+      rowHeights="[136]"
+      rowLabelOffset="[[0,0]]"
+      itemComponentName="GuideProgramItem"
+      showRowLabel="true"
+      showRowCounter="false"
+      vertFocusAnimationStyle="fixedFocus"
+      rowFocusAnimationStyle="fixedFocusWrap"
+      focusBitmapUri="pkg:/images/transparent.png"
+      focusFootprintBitmapUri="pkg:/images/transparent.png" />
+
+    <Label
+      id="loadingLabel"
+      translation="[90,440]"
+      width="1740"
+      height="80"
+      horizAlign="center"
+      text="Scanning your complete Jellyfin library. This may take a while..."
+      font="font:MediumSystemFont"
+      color="0xD9E2EAFF" />
+    <Label
+      id="statusLabel"
+      translation="[92,975]"
+      width="1380"
+      height="36"
+      text="Preparing the complete lineup..."
+      font="font:SmallSystemFont"
+      color="0x8F9EACFF" />
+
+    <OptionsSlider id="options" />
+    <Timer id="refreshTimer" duration="30" repeat="true" />
+  </children>
+</component>

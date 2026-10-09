@@ -1,0 +1,18 @@
+{
+  "files": [
+    "manifest",
+    "source/**/*.*",
+    "components/**/*.*",
+    "images/**/*.*",
+    "!images/jellyvision-brand-master.png",
+    "locale/**/*.*",
+    "settings/*.*"
+  ],
+  "plugins": ["@rokucommunity/bslint"],
+  "diagnosticFilters": ["node_modules/**/*", "**/roku_modules/**/*"],
+  "sourceMap": false,
+  "autoImportComponentScript": true,
+  "stagingDir": "build/staging",
+  "outFile": "out/jellyvision-roku.zip",
+  "retainStagingDir": true
+}

@@ -1,0 +1,45 @@
+import "pkg:/source/utils/misc.bs"
+
+sub init()
+    m.card = m.top.findNode("card")
+    m.accent = m.top.findNode("accent")
+    m.time = m.top.findNode("time")
+    m.title = m.top.findNode("title")
+    m.detail = m.top.findNode("detail")
+    m.isCurrent = false
+end sub
+
+sub onContentChanged()
+    content = m.top.itemContent
+    if not isValid(content) then return
+
+    m.time.text = content.shortDescriptionLine1
+    m.title.text = content.title
+    m.detail.text = content.description
+    m.isCurrent = content.LookupCI("isCurrent") = true
+
+    if m.isCurrent
+        m.card.color = "0x25475CFF"
+        m.accent.color = "0x55C2FFFF"
+    else
+        m.card.color = "0x263241FF"
+        m.accent.color = "0x566575FF"
+    end if
+end sub
+
+sub onFocusPercentChanged()
+    if m.top.focusPercent > 0.5
+        m.card.color = "0x1479B8FF"
+        m.accent.color = "0xFFFFFFFF"
+        m.detail.color = "0xFFFFFFFF"
+    else
+        m.detail.color = "0xB8C1CCFF"
+        if m.isCurrent
+            m.card.color = "0x25475CFF"
+            m.accent.color = "0x55C2FFFF"
+        else
+            m.card.color = "0x263241FF"
+            m.accent.color = "0x566575FF"
+        end if
+    end if
+end sub

@@ -1,0 +1,197 @@
+' Deterministic pseudo-live scheduling for generated Jellyfin channels.
+'
+' Schedules are anchored to a fixed UTC epoch. Given the same channel seed and
+' ordered set of Jellyfin item IDs, every device calculates the same programme
+' and playback offset for a given point in time without a server-side scheduler.
+
+import "pkg:/source/utils/misc.bs"
+
+const CHANNEL_SCHEDULE_EPOCH = 1704067200 ' 2024-01-01 00:00:00 UTC
+const CHANNEL_DEFAULT_DURATION_SECONDS = 1800
+const CHANNEL_MIN_DURATION_SECONDS = 120
+const CHANNEL_MAX_DURATION_SECONDS = 28800
+
+function ChannelSchedule_NowSeconds() as dynamic
+    now = CreateObject("roDateTime")
+    now.Mark()
+
+    try
+        return now.AsSecondsLong()
+    catch e
+        return now.AsSeconds()
+    end try
+end function
+
+function ChannelSchedule_ItemDurationSeconds(item as dynamic) as integer
+    if not isValid(item) then return CHANNEL_DEFAULT_DURATION_SECONDS
+
+    runtimeTicks = item.LookupCI("RunTimeTicks")
+    if not isValid(runtimeTicks) or runtimeTicks <= 0 then return CHANNEL_DEFAULT_DURATION_SECONDS
+
+    duration = Fix(runtimeTicks / 10000000)
+    if duration < CHANNEL_MIN_DURATION_SECONDS then return CHANNEL_MIN_DURATION_SECONDS
+    if duration > CHANNEL_MAX_DURATION_SECONDS then return CHANNEL_MAX_DURATION_SECONDS
+
+    return duration
+end function
+
+function ChannelSchedule_ItemTitle(item as dynamic) as string
+    if not isValid(item) then return "Unavailable item"
+
+    title = item.LookupCI("Name")
+    if not isValid(title) or title = "" then title = "Untitled"
+
+    itemType = LCase(item.LookupCI("Type") ?? "")
+    if itemType = "episode"
+        seriesName = item.LookupCI("SeriesName")
+        if isValid(seriesName) and seriesName <> ""
+            episodeCode = ""
+            seasonNumber = item.LookupCI("ParentIndexNumber")
+            episodeNumber = item.LookupCI("IndexNumber")
+
+            if isValid(seasonNumber) and isValid(episodeNumber)
+                episodeCode = ` S${seasonNumber}E${episodeNumber}`
+            end if
+
+            return `${seriesName}${episodeCode} - ${title}`
+        end if
+    end if
+
+    return title
+end function
+
+function ChannelSchedule_BuildWindow(items as object, seed as integer, nowSeconds as dynamic, programmeCount = 4 as integer, itemsAreOrdered = false as boolean) as object
+    programmes = []
+    if not isValid(items) or items.Count() = 0 then return programmes
+    if programmeCount < 1 then return programmes
+
+    orderedItems = items
+    if not itemsAreOrdered then orderedItems = ChannelSchedule_OrderItems(items, seed)
+    if orderedItems.Count() = 0 then return programmes
+
+    totalDuration = 0
+    for each orderedItem in orderedItems
+        totalDuration += ChannelSchedule_ItemDurationSeconds(orderedItem)
+    end for
+    if totalDuration <= 0 then return programmes
+
+    phase = ChannelSchedule_PositiveModulo(seed * 997, totalDuration)
+    cyclePosition = ChannelSchedule_PositiveModulo((nowSeconds - CHANNEL_SCHEDULE_EPOCH) + phase, totalDuration)
+    cycleStart = nowSeconds - cyclePosition
+
+    currentIndex = 0
+    currentStart = cycleStart
+    cursor = 0
+
+    for i = 0 to orderedItems.Count() - 1
+        duration = ChannelSchedule_ItemDurationSeconds(orderedItems[i])
+        if cyclePosition < cursor + duration
+            currentIndex = i
+            currentStart = cycleStart + cursor
+            exit for
+        end if
+        cursor += duration
+    end for
+
+    programmeStart = currentStart
+    for programmeOffset = 0 to programmeCount - 1
+        itemIndex = (currentIndex + programmeOffset) mod orderedItems.Count()
+        scheduledItem = orderedItems[itemIndex]
+        duration = ChannelSchedule_ItemDurationSeconds(scheduledItem)
+        offsetSeconds = 0
+        if programmeOffset = 0
+            offsetSeconds = nowSeconds - programmeStart
+            if offsetSeconds < 0 then offsetSeconds = 0
+            if offsetSeconds >= duration then offsetSeconds = duration - 1
+        end if
+
+        programmes.Push({
+            item: scheduledItem,
+            title: ChannelSchedule_ItemTitle(scheduledItem),
+            startEpoch: programmeStart,
+            endEpoch: programmeStart + duration,
+            durationSeconds: duration,
+            offsetSeconds: offsetSeconds,
+            isCurrent: programmeOffset = 0
+        })
+
+        programmeStart += duration
+    end for
+
+    return programmes
+end function
+
+function ChannelSchedule_OrderItems(items as object, seed as integer) as object
+    keyedItems = []
+
+    for each item in items
+        itemId = item.LookupCI("Id") ?? ""
+        keyedItems.Push({
+            item: item,
+            key: ChannelSchedule_Hash(`${seed}:${itemId}`),
+            id: itemId
+        })
+    end for
+
+    ' Quicksort keeps the stable hash + ID ordering while scaling to the larger
+    ' JellyVision lineup on lower-powered Roku TVs.
+    if keyedItems.Count() > 1 then ChannelSchedule_QuickSort(keyedItems, 0, keyedItems.Count() - 1)
+
+    orderedItems = []
+    for each keyedItem in keyedItems
+        orderedItems.Push(keyedItem.item)
+    end for
+
+    return orderedItems
+end function
+
+sub ChannelSchedule_QuickSort(items as object, low as integer, high as integer)
+    left = low
+    right = high
+    pivot = items[Fix((low + high) / 2)]
+
+    while left <= right
+        while left <= high and ChannelSchedule_ShouldMoveAfter(pivot, items[left])
+            left++
+        end while
+
+        while right >= low and ChannelSchedule_ShouldMoveAfter(items[right], pivot)
+            right--
+        end while
+
+        if left <= right
+            swapItem = items[left]
+            items[left] = items[right]
+            items[right] = swapItem
+            left++
+            right--
+        end if
+    end while
+
+    if low < right then ChannelSchedule_QuickSort(items, low, right)
+    if left < high then ChannelSchedule_QuickSort(items, left, high)
+end sub
+
+function ChannelSchedule_ShouldMoveAfter(leftItem as object, rightItem as object) as boolean
+    if leftItem.key > rightItem.key then return true
+    if leftItem.key < rightItem.key then return false
+    return leftItem.id > rightItem.id
+end function
+
+function ChannelSchedule_Hash(value as string) as integer
+    hash = 216613&
+
+    for i = 1 to value.Len()
+        hash = (hash + (Asc(Mid(value, i, 1)) * (i + 37) * 97)) mod 2147483629&
+    end for
+
+    return hash
+end function
+
+function ChannelSchedule_PositiveModulo(value as dynamic, divisor as integer) as integer
+    if divisor <= 0 then return 0
+
+    result = value mod divisor
+    if result < 0 then result += divisor
+    return result
+end function

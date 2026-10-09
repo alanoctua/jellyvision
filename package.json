@@ -1,0 +1,38 @@
+{
+  "name": "jellyvision-roku",
+  "type": "module",
+  "version": "0.4.3",
+  "description": "JellyVision pseudo-live television channels for Jellyfin on Roku",
+  "dependencies": {
+    "@rokucommunity/bslib": "0.1.1",
+    "brighterscript-formatter": "1.8.2"
+  },
+  "devDependencies": {
+    "@rokucommunity/bslint": "0.8.45",
+    "brighterscript": "0.73.1",
+    "jshint": "2.13.6",
+    "rimraf": "6.1.3",
+    "roku-deploy": "3.18.4",
+    "undent": "1.0.1"
+  },
+  "scripts": {
+    "build": "npx bsc --project bsconfig.json",
+    "clean": "npx rimraf build/ out/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alanoctua/jellyvision.git"
+  },
+  "keywords": [
+    "jellyfin",
+    "roku",
+    "music",
+    "movies"
+  ],
+  "author": "JellyVision contributors; based on Jellyfin for Roku",
+  "license": "GPL-2.0",
+  "bugs": {
+    "url": "https://github.com/alanoctua/jellyvision/issues"
+  },
+  "homepage": "https://github.com/alanoctua/jellyvision"
+}

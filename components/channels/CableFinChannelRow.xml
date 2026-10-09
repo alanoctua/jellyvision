@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="CableFinChannelRow" extends="Group">
+  <interface>
+    <field id="channelData" type="assocarray" onChange="onChannelDataChanged" />
+    <field id="selected" type="boolean" value="false" onChange="onAppearanceChanged" />
+    <field id="tuned" type="boolean" value="false" onChange="onAppearanceChanged" />
+  </interface>
+  <children>
+    <Rectangle id="channelCard" width="300" height="56" color="0x102A72FF" />
+    <Rectangle id="programmeBackground" translation="[302,0]" width="1618" height="56" color="0x202630FF" />
+    <Group id="programmeGroup" translation="[302,0]" clippingRect="[0,0,1618,56]" />
+    <Rectangle id="tunedMarker" width="7" height="56" color="0x52D5FFFF" visible="false" />
+    <Label id="number" translation="[18,4]" width="74" height="25" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+    <Label id="name" translation="[18,27]" width="270" height="25" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" ellipsisText="..." />
+  </children>
+</component>

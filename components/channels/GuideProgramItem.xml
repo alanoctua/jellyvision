@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="GuideProgramItem" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContentChanged" />
+    <field id="focusPercent" type="float" onChange="onFocusPercentChanged" />
+  </interface>
+  <children>
+    <Rectangle id="card" width="385" height="112" color="0x263241FF" cornerRadius="8" />
+    <Rectangle id="accent" width="7" height="112" color="0x4FA3D1FF" cornerRadius="4" />
+    <Label
+      id="time"
+      translation="[22,12]"
+      width="340"
+      height="26"
+      font="font:SmallBoldSystemFont"
+      color="0x8ECDF0FF" />
+    <Label
+      id="title"
+      translation="[22,39]"
+      width="340"
+      height="34"
+      font="font:MediumBoldSystemFont"
+      color="0xFFFFFFFF"
+      ellipsisText="..." />
+    <Label
+      id="detail"
+      translation="[22,76]"
+      width="340"
+      height="24"
+      font="font:SmallSystemFont"
+      color="0xB8C1CCFF"
+      ellipsisText="..." />
+  </children>
+</component>
