@@ -17,13 +17,6 @@ point in the programme.
 Your videos stay on your own Jellyfin server. JellyVision simply organises and
 plays them in a familiar TV guide.
 
-## Interface preview
-
-![JellyVision channel guide interface preview](screenshots/jellyvision-guide-preview.png)
-
-*Representative preview using fictional programmes. The videos, programme names
-and channel contents shown on your TV come from your own Jellyfin library.*
-
 > **Please note:** JellyVision is currently a test version and is not yet in the
 > Roku Streaming Store. For now, it must be added to a Roku manually.
 
